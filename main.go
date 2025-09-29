@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"strconv"
+	"os"
 
 	"openapi-validation-example/generated"
 
@@ -11,19 +11,21 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
-type UserService struct {
+// UserHandler implements the generated.ServerInterface (in-memory version)
+type UserHandler struct {
 	users  map[int64]generated.User
 	nextID int64
 }
 
-func NewUserService() *UserService {
-	return &UserService{
+func NewUserHandler() *UserHandler {
+	return &UserHandler{
 		users:  make(map[int64]generated.User),
 		nextID: 1,
 	}
 }
 
-func (s *UserService) CreateUser(ctx echo.Context) error {
+// CreateUser implements the generated.ServerInterface.CreateUser method
+func (h *UserHandler) CreateUser(ctx echo.Context) error {
 	var req generated.UserRequest
 	if err := ctx.Bind(&req); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{
@@ -32,19 +34,31 @@ func (s *UserService) CreateUser(ctx echo.Context) error {
 	}
 
 	user := generated.User{
-		Id:    s.nextID,
+		Id:    h.nextID,
 		Email: req.Email,
 		Age:   req.Age,
 	}
 
-	s.users[s.nextID] = user
-	s.nextID++
+	// Handle optional fields
+	if req.Name != nil {
+		user.Name = req.Name
+	}
+	if req.Bio != nil {
+		user.Bio = req.Bio
+	}
+	if req.IsActive != nil {
+		user.IsActive = req.IsActive
+	}
+
+	h.users[h.nextID] = user
+	h.nextID++
 
 	return ctx.JSON(http.StatusCreated, user)
 }
 
-func (s *UserService) GetUserById(ctx echo.Context, id int64) error {
-	user, exists := s.users[id]
+// GetUserById implements the generated.ServerInterface.GetUserById method
+func (h *UserHandler) GetUserById(ctx echo.Context, id int64) error {
+	user, exists := h.users[id]
 	if !exists {
 		return ctx.JSON(http.StatusNotFound, map[string]string{
 			"error": "User not found",
@@ -67,28 +81,21 @@ func main() {
 
 	e.Use(validationMiddleware.Validate())
 
-	userService := NewUserService()
+	userHandler := NewUserHandler()
 
-	e.POST("/users", func(c echo.Context) error {
-		return userService.CreateUser(c)
-	})
+	// Use the generated RegisterHandlers function to register routes
+	generated.RegisterHandlers(e, userHandler)
 
-	e.GET("/users/:id", func(c echo.Context) error {
-		idStr := c.Param("id")
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "Invalid user ID format",
-			})
-		}
-		return userService.GetUserById(c, id)
-	})
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-	fmt.Println("Server starting on :8080")
-	fmt.Println("API Documentation: http://localhost:8080")
+	fmt.Printf("Server starting on :%s\n", port)
+	fmt.Printf("API Documentation: http://localhost:%s\n", port)
 	fmt.Println("Test with: make test")
 
-	if err := e.Start(":8080"); err != nil {
+	if err := e.Start(":" + port); err != nil {
 		e.Logger.Fatal("Server failed to start:", err)
 	}
 }
