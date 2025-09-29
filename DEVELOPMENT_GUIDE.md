@@ -79,6 +79,482 @@
 // - 複数バリデーションモードの対応
 ```
 
+## 🔧 ミドルウェアの実装と使用方法
+
+### ミドルウェアとは
+ミドルウェアは、HTTPリクエストの処理チェーンに組み込まれる関数で、リクエストやレスポンスを処理する前後に共通の処理を実行できます。
+
+### Echo ミドルウェアの基本構造
+
+```go
+// ミドルウェアの基本形
+func MyMiddleware() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            // リクエスト前の処理
+            fmt.Println("Before request")
+
+            // 次のミドルウェアまたはハンドラーを実行
+            err := next(c)
+
+            // レスポンス後の処理
+            fmt.Println("After request")
+
+            return err
+        }
+    }
+}
+```
+
+### 1. バリデーションミドルウェアの実装
+
+**ファイル**: `validator.go`
+
+#### 構造とサービス初期化
+
+```go
+type ValidationMiddleware struct {
+    router routers.Router // kin-openapi のルーター
+}
+
+// ミドルウェアの初期化
+func NewValidationMiddleware(specPath string) (*ValidationMiddleware, error) {
+    ctx := context.Background()
+
+    // 1. OpenAPIスペックをファイルから読み込み
+    loader := &openapi3.Loader{Context: ctx, IsExternalRefsAllowed: true}
+    doc, err := loader.LoadFromFile(specPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to load OpenAPI spec: %w", err)
+    }
+
+    // 2. スペックの妥当性を検証
+    if err := doc.Validate(ctx); err != nil {
+        return nil, fmt.Errorf("OpenAPI spec validation failed: %w", err)
+    }
+
+    // 3. Gorilla Muxルーターを作成（kin-openapiで使用）
+    router, err := gorillamux.NewRouter(doc)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create router: %w", err)
+    }
+
+    return &ValidationMiddleware{
+        router: router,
+    }, nil
+}
+```
+
+#### ミドルウェア関数の実装
+
+```go
+func (v *ValidationMiddleware) Validate() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            req := c.Request()
+
+            // 1. リクエストに対応するOpenAPIルートを検索
+            route, pathParams, err := v.router.FindRoute(req)
+            if err != nil {
+                // OpenAPIに定義されていないルートは検証しない
+                return next(c)
+            }
+
+            // 2. バリデーション用の入力を構築
+            requestValidationInput := &openapi3filter.RequestValidationInput{
+                Request:    req,
+                PathParams: pathParams,
+                Route:      route,
+            }
+
+            // 3. OpenAPIスキーマに対してリクエストを検証
+            ctx := context.Background()
+            if err := openapi3filter.ValidateRequest(ctx, requestValidationInput); err != nil {
+                return v.handleValidationError(c, err)
+            }
+
+            // 4. バリデーション成功時は次の処理に進む
+            return next(c)
+        }
+    }
+}
+```
+
+#### エラーハンドリングの実装
+
+```go
+func (v *ValidationMiddleware) handleValidationError(c echo.Context, err error) error {
+    var errorMessage string
+
+    // エラータイプによって適切なメッセージを生成
+    switch e := err.(type) {
+    case *openapi3filter.RequestError:
+        // パラメータエラー
+        if e.Parameter != nil {
+            errorMessage = fmt.Sprintf("Parameter validation failed for '%s': %s",
+                e.Parameter.Name, e.Err.Error())
+        }
+        // リクエストボディエラー
+        else if e.RequestBody != nil {
+            errorMessage = fmt.Sprintf("Request body validation failed: %s", e.Err.Error())
+        }
+        // その他のリクエストエラー
+        else {
+            errorMessage = fmt.Sprintf("Request validation failed: %s", e.Err.Error())
+        }
+    case *openapi3filter.SecurityRequirementsError:
+        errorMessage = "Security requirements not met"
+    default:
+        errorMessage = err.Error()
+    }
+
+    // エラーメッセージをユーザーフレンドリーに変換
+    errorMessage = v.formatErrorMessage(errorMessage)
+
+    return c.JSON(http.StatusBadRequest, map[string]string{
+        "error": errorMessage,
+    })
+}
+
+// エラーメッセージの整形
+func (v *ValidationMiddleware) formatErrorMessage(message string) string {
+    // より読みやすいメッセージに変換
+    message = strings.ReplaceAll(message, "doesn't match schema", "does not match the required format")
+    message = strings.ReplaceAll(message, "Error at", "Error in field")
+    message = strings.ReplaceAll(message, "Property", "Field")
+
+    if strings.Contains(message, "minimum") {
+        message = strings.ReplaceAll(message, "minimum", "must be at least")
+    }
+
+    if strings.Contains(message, "format") && strings.Contains(message, "email") {
+        message = "Email address format is invalid"
+    }
+
+    if strings.Contains(message, "required") {
+        message = strings.ReplaceAll(message, "property", "field")
+    }
+
+    return message
+}
+```
+
+#### main-variants.go での使用方法
+
+```go
+func createApp(validationMode string) (*echo.Echo, error) {
+    e := echo.New()
+
+    // 1. 組み込みミドルウェアの追加
+    e.Use(middleware.Logger())   // リクエストログ
+    e.Use(middleware.Recover())  // パニックからの回復
+
+    // 2. バリデーション仕様ファイルの選択
+    var specFile string
+    switch validationMode {
+    case "flexible":
+        specFile = "openapi-flexible.yaml"
+    case "strict":
+        specFile = "openapi-strict.yaml"
+    default:
+        specFile = "openapi.yaml"
+    }
+
+    // 3. バリデーションミドルウェアの初期化と登録
+    validationMiddleware, err := NewValidationMiddleware(specFile)
+    if err != nil {
+        return nil, fmt.Errorf("failed to initialize validation middleware: %w", err)
+    }
+
+    // 4. ミドルウェアの登録（全ルートに適用）
+    e.Use(validationMiddleware.Validate())
+
+    // 5. ルートハンドラーの登録
+    // この時点で、すべてのリクエストは上記のミドルウェアチェーンを通る
+    e.POST("/users", func(c echo.Context) error {
+        return userService.CreateUser(c)
+    })
+
+    return e, nil
+}
+```
+
+### 2. 組み込みミドルウェアの使用
+
+#### Logger ミドルウェア
+
+```go
+// 基本的なログミドルウェア
+e.Use(middleware.Logger())
+
+// カスタムログ設定
+e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+    Format: "${time_rfc3339} ${method} ${uri} ${status} ${latency_human}\n",
+    Output: os.Stdout,
+}))
+
+// 構造化ログの例
+e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+    Skipper: middleware.DefaultSkipper,
+    Format: `{"time":"${time_rfc3339_nano}","id":"${id}","remote_ip":"${remote_ip}",` +
+        `"host":"${host}","method":"${method}","uri":"${uri}","user_agent":"${user_agent}",` +
+        `"status":${status},"error":"${error}","latency":${latency},"latency_human":"${latency_human}",` +
+        `"bytes_in":${bytes_in},"bytes_out":${bytes_out}}` + "\n",
+}))
+```
+
+#### Recover ミドルウェア
+
+```go
+// 基本的なリカバリーミドルウェア
+e.Use(middleware.Recover())
+
+// カスタムリカバリー設定
+e.Use(middleware.RecoverWithConfig(middleware.RecoverConfig{
+    Skipper:   middleware.DefaultSkipper,
+    StackSize: 1 << 10, // 1KB
+    LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+        // カスタムエラーログ
+        log.Printf("[PANIC RECOVER] %v %s", err, stack)
+        return err
+    },
+}))
+```
+
+#### CORS ミドルウェア
+
+```go
+import "github.com/labstack/echo/v4/middleware"
+
+// 基本的なCORS設定
+e.Use(middleware.CORS())
+
+// カスタムCORS設定
+e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+    AllowOrigins: []string{"https://example.com", "https://app.example.com"},
+    AllowMethods: []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete},
+    AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+    AllowCredentials: true,
+}))
+```
+
+### 3. カスタムミドルウェアの実装例
+
+#### リクエストID ミドルウェア
+
+```go
+func RequestIDMiddleware() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            // リクエストIDを生成
+            requestID := c.Request().Header.Get(echo.HeaderXRequestID)
+            if requestID == "" {
+                requestID = generateRequestID() // UUIDなどを生成
+            }
+
+            // コンテキストに保存
+            c.Set("request_id", requestID)
+
+            // レスポンスヘッダーにも設定
+            c.Response().Header().Set(echo.HeaderXRequestID, requestID)
+
+            return next(c)
+        }
+    }
+}
+
+// 使用例
+e.Use(RequestIDMiddleware())
+```
+
+#### 認証ミドルウェア
+
+```go
+func AuthMiddleware(secretKey string) echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            // Authorization ヘッダーをチェック
+            auth := c.Request().Header.Get("Authorization")
+            if auth == "" {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "Authorization header required",
+                })
+            }
+
+            // Bearer トークンの検証
+            if !strings.HasPrefix(auth, "Bearer ") {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "Invalid authorization format",
+                })
+            }
+
+            token := strings.TrimPrefix(auth, "Bearer ")
+
+            // JWTトークンの検証（実装例）
+            claims, err := validateJWT(token, secretKey)
+            if err != nil {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "Invalid token",
+                })
+            }
+
+            // ユーザー情報をコンテキストに保存
+            c.Set("user", claims)
+
+            return next(c)
+        }
+    }
+}
+
+// 特定のルートにのみ適用
+protectedGroup := e.Group("/api/protected")
+protectedGroup.Use(AuthMiddleware("your-secret-key"))
+```
+
+#### レート制限ミドルウェア
+
+```go
+import "golang.org/x/time/rate"
+
+func RateLimitMiddleware(requestsPerSecond float64, burst int) echo.MiddlewareFunc {
+    limiter := rate.NewLimiter(rate.Limit(requestsPerSecond), burst)
+
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            if !limiter.Allow() {
+                return c.JSON(http.StatusTooManyRequests, map[string]string{
+                    "error": "Rate limit exceeded",
+                })
+            }
+            return next(c)
+        }
+    }
+}
+
+// 使用例: 1秒あたり10リクエスト、バースト20
+e.Use(RateLimitMiddleware(10.0, 20))
+```
+
+### 4. ミドルウェアの実行順序
+
+```go
+func setupMiddlewares(e *echo.Echo) {
+    // 1. 最初に実行されるミドルウェア（ログ、リカバリー）
+    e.Use(middleware.Logger())
+    e.Use(middleware.Recover())
+
+    // 2. セキュリティ関連
+    e.Use(middleware.Secure())
+    e.Use(middleware.CORS())
+
+    // 3. リクエスト前処理
+    e.Use(RequestIDMiddleware())
+    e.Use(RateLimitMiddleware(10.0, 20))
+
+    // 4. 認証（必要な場合）
+    // e.Use(AuthMiddleware("secret"))
+
+    // 5. バリデーション（最後の方で実行）
+    validationMiddleware, _ := NewValidationMiddleware("openapi.yaml")
+    e.Use(validationMiddleware.Validate())
+}
+```
+
+### 5. ミドルウェアのテスト
+
+```go
+func TestValidationMiddleware(t *testing.T) {
+    // Echo インスタンスを作成
+    e := echo.New()
+
+    // ミドルウェアを設定
+    validationMiddleware, err := NewValidationMiddleware("openapi.yaml")
+    assert.NoError(t, err)
+    e.Use(validationMiddleware.Validate())
+
+    // テストハンドラーを設定
+    e.POST("/users", func(c echo.Context) error {
+        return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+    })
+
+    // 正常なリクエストのテスト
+    t.Run("Valid Request", func(t *testing.T) {
+        req := httptest.NewRequest(http.MethodPost, "/users",
+            strings.NewReader(`{"email":"test@example.com","age":25}`))
+        req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+        rec := httptest.NewRecorder()
+
+        e.ServeHTTP(rec, req)
+
+        assert.Equal(t, http.StatusOK, rec.Code)
+    })
+
+    // 無効なリクエストのテスト
+    t.Run("Invalid Request", func(t *testing.T) {
+        req := httptest.NewRequest(http.MethodPost, "/users",
+            strings.NewReader(`{"age":25}`)) // email が不足
+        req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+        rec := httptest.NewRecorder()
+
+        e.ServeHTTP(rec, req)
+
+        assert.Equal(t, http.StatusBadRequest, rec.Code)
+        assert.Contains(t, rec.Body.String(), "email")
+    })
+}
+```
+
+### 6. ミドルウェアのベストプラクティス
+
+#### エラーハンドリング
+
+```go
+func SafeMiddleware() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            defer func() {
+                if r := recover(); r != nil {
+                    // パニックをキャッチしてログに記録
+                    log.Printf("Middleware panic: %v", r)
+
+                    // 適切なエラーレスポンスを返す
+                    if !c.Response().Committed {
+                        c.JSON(http.StatusInternalServerError, map[string]string{
+                            "error": "Internal server error",
+                        })
+                    }
+                }
+            }()
+
+            return next(c)
+        }
+    }
+}
+```
+
+#### パフォーマンス考慮
+
+```go
+func EfficientMiddleware() echo.MiddlewareFunc {
+    // 初期化時に重い処理を実行
+    heavyResource := initializeHeavyResource()
+
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            // リクエストごとには軽い処理のみ
+            if shouldSkip(c) {
+                return next(c)
+            }
+
+            // 必要最小限の処理
+            doLightWork(c, heavyResource)
+
+            return next(c)
+        }
+    }
+}
+```
+
 ## 🔧 技術スタック詳細
 
 ### 1. OpenAPI + oapi-codegen
