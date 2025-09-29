@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 
 	"openapi-validation-example/generated"
 
@@ -14,17 +13,19 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
-type UserService struct {
+// UserHandler implements the generated.ServerInterface
+type UserHandler struct {
 	db *DatabaseService
 }
 
-func NewUserService(db *DatabaseService) *UserService {
-	return &UserService{
+func NewUserHandler(db *DatabaseService) *UserHandler {
+	return &UserHandler{
 		db: db,
 	}
 }
 
-func (s *UserService) CreateUser(ctx echo.Context) error {
+// CreateUser implements the generated.ServerInterface.CreateUser method
+func (h *UserHandler) CreateUser(ctx echo.Context) error {
 	var rawBody map[string]interface{}
 	if err := ctx.Bind(&rawBody); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{
@@ -55,7 +56,7 @@ func (s *UserService) CreateUser(ctx echo.Context) error {
 		}
 	}
 
-	user, err := s.db.CreateUser(userReq, additionalProps)
+	user, err := h.db.CreateUser(userReq, additionalProps)
 	if err != nil {
 		return ctx.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to create user: %v", err),
@@ -65,8 +66,9 @@ func (s *UserService) CreateUser(ctx echo.Context) error {
 	return ctx.JSON(http.StatusCreated, user)
 }
 
-func (s *UserService) GetUserById(ctx echo.Context, id int64) error {
-	user, err := s.db.GetUserByID(id)
+// GetUserById implements the generated.ServerInterface.GetUserById method
+func (h *UserHandler) GetUserById(ctx echo.Context, id int64) error {
+	user, err := h.db.GetUserByID(id)
 	if err != nil {
 		if err.Error() == "user not found" {
 			return ctx.JSON(http.StatusNotFound, map[string]string{
@@ -109,22 +111,10 @@ func createApp(validationMode string) (*echo.Echo, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
-	userService := NewUserService(db)
+	userHandler := NewUserHandler(db)
 
-	e.POST("/users", func(c echo.Context) error {
-		return userService.CreateUser(c)
-	})
-
-	e.GET("/users/:id", func(c echo.Context) error {
-		idStr := c.Param("id")
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error": "Invalid user ID format",
-			})
-		}
-		return userService.GetUserById(c, id)
-	})
+	// Use the generated RegisterHandlers function to register routes
+	generated.RegisterHandlers(e, userHandler)
 
 	return e, nil
 }

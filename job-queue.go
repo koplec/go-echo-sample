@@ -51,9 +51,9 @@ func (jq *JobQueueService) EnqueueJob(jobType JobType, payload JobPayload, prior
 	job, err := jq.queries.CreateJob(context.Background(), db.CreateJobParams{
 		JobType:     string(jobType),
 		Payload:     string(payloadJSON),
-		Priority:    int64(priority),
-		MaxRetries:  3,
-		ScheduledAt: time.Now(),
+		Priority:    sql.NullInt64{Int64: int64(priority), Valid: true},
+		MaxRetries:  sql.NullInt64{Int64: 3, Valid: true},
+		ScheduledAt: sql.NullTime{Time: time.Now(), Valid: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create job: %w", err)
