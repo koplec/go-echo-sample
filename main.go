@@ -11,21 +11,21 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
-// UserHandler implements the generated.ServerInterface (in-memory version)
-type UserHandler struct {
+// InMemoryUserHandler implements the generated.ServerInterface (in-memory version)
+type InMemoryUserHandler struct {
 	users  map[int64]generated.User
 	nextID int64
 }
 
-func NewUserHandler() *UserHandler {
-	return &UserHandler{
+func NewInMemoryUserHandler() *InMemoryUserHandler {
+	return &InMemoryUserHandler{
 		users:  make(map[int64]generated.User),
 		nextID: 1,
 	}
 }
 
 // CreateUser implements the generated.ServerInterface.CreateUser method
-func (h *UserHandler) CreateUser(ctx echo.Context) error {
+func (h *InMemoryUserHandler) CreateUser(ctx echo.Context) error {
 	var req generated.UserRequest
 	if err := ctx.Bind(&req); err != nil {
 		return ctx.JSON(http.StatusBadRequest, map[string]string{
@@ -57,7 +57,7 @@ func (h *UserHandler) CreateUser(ctx echo.Context) error {
 }
 
 // GetUserById implements the generated.ServerInterface.GetUserById method
-func (h *UserHandler) GetUserById(ctx echo.Context, id int64) error {
+func (h *InMemoryUserHandler) GetUserById(ctx echo.Context, id int64) error {
 	user, exists := h.users[id]
 	if !exists {
 		return ctx.JSON(http.StatusNotFound, map[string]string{
@@ -81,7 +81,7 @@ func main() {
 
 	e.Use(validationMiddleware.Validate())
 
-	userHandler := NewUserHandler()
+	userHandler := NewInMemoryUserHandler()
 
 	// Use the generated RegisterHandlers function to register routes
 	generated.RegisterHandlers(e, userHandler)

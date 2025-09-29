@@ -52,6 +52,41 @@ worker-enqueue:
 	@echo "Enqueuing test job..."
 	go run worker-manager.go validator.go database.go job-queue.go enqueue user_created "Test user creation job" 1
 
+# Test Commands
+test-unit:
+	@echo "Running unit tests..."
+	go test -v -short ./...
+
+test-integration:
+	@echo "Running integration tests..."
+	go test -v ./...
+
+test-coverage:
+	@echo "Running tests with coverage..."
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+test-bench:
+	@echo "Running benchmark tests..."
+	go test -bench=. -benchmem ./...
+
+test-validator:
+	@echo "Testing validation middleware..."
+	go test -v -run TestValidationMiddleware ./...
+
+test-job-queue:
+	@echo "Testing job queue functionality..."
+	go test -v -run TestJobQueueService ./...
+
+test-handlers:
+	@echo "Testing API handlers..."
+	go test -v -run TestUserHandler ./...
+
+test-api-client:
+	@echo "Testing API client (requires running servers)..."
+	go test -v -run TestAPIClient ./...
+
 test:
 	@echo "Testing default validation mode..."
 	@echo "1. Valid user with all properties:"
