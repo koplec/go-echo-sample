@@ -8,6 +8,21 @@ import (
 	"database/sql"
 )
 
+type JobQueue struct {
+	ID           int64          `db:"id" json:"id"`
+	JobType      string         `db:"job_type" json:"job_type"`
+	Payload      string         `db:"payload" json:"payload"`
+	Status       string         `db:"status" json:"status"`
+	Priority     sql.NullInt64  `db:"priority" json:"priority"`
+	MaxRetries   sql.NullInt64  `db:"max_retries" json:"max_retries"`
+	RetryCount   sql.NullInt64  `db:"retry_count" json:"retry_count"`
+	ErrorMessage sql.NullString `db:"error_message" json:"error_message"`
+	ScheduledAt  sql.NullTime   `db:"scheduled_at" json:"scheduled_at"`
+	StartedAt    sql.NullTime   `db:"started_at" json:"started_at"`
+	CompletedAt  sql.NullTime   `db:"completed_at" json:"completed_at"`
+	CreatedAt    sql.NullTime   `db:"created_at" json:"created_at"`
+}
+
 type User struct {
 	ID             int64          `db:"id" json:"id"`
 	Email          string         `db:"email" json:"email"`

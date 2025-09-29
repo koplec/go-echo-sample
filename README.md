@@ -1,6 +1,6 @@
-# OpenAPI Validation Example with Multiple Variants
+# OpenAPI Validation Example with Background Worker System
 
-This project demonstrates OpenAPI 3.0.3 specification validation in a Go Echo server using kin-openapi, oapi-codegen, and sqlc for database operations.
+This project demonstrates OpenAPI 3.0.3 specification validation in a Go Echo server using kin-openapi, oapi-codegen, and sqlc for database operations, plus a complete background job processing system.
 
 ## Features
 
@@ -10,6 +10,8 @@ This project demonstrates OpenAPI 3.0.3 specification validation in a Go Echo se
 - **Database Integration**: SQLite database with sqlc-generated code
 - **Request Validation**: Real-time validation using kin-openapi middleware
 - **Optional Properties**: Support for required and optional user fields
+- **Background Job Processing**: Asynchronous job queue system for processing received JSON data
+- **Worker Management**: Start/stop workers, monitor job statistics, and manage job queue
 
 ## Project Structure
 
@@ -23,6 +25,9 @@ openapi-validation-example/
 ├── main-variants.go     # Echo server with multiple validation modes
 ├── validator.go         # kin-openapi validation middleware
 ├── database.go          # Database service layer
+├── job-queue.go         # Job queue service for background processing
+├── worker.go           # Background worker process
+├── worker-manager.go   # Worker management CLI tool
 ├── sqlc.yaml           # sqlc configuration
 ├── schema.sql          # Database schema
 ├── queries.sql         # SQL queries
@@ -266,3 +271,75 @@ CREATE TABLE users (
 - `make test-flexible`: Test flexible mode
 - `make test-strict`: Test strict mode
 - `make clean`: Remove generated files and database
+
+### Background Worker Commands
+
+- `make worker`: Start background worker processes (foreground)
+- `make worker-bg`: Start background worker processes (background)
+- `make worker-stats`: Show job queue statistics
+- `make worker-list`: List pending jobs
+- `make worker-enqueue`: Enqueue a test job
+
+## Background Job Processing
+
+### How It Works
+
+1. **Web Server Receives JSON**: When a user is created via the REST API, the server saves the user data to the database
+2. **Job Enqueuing**: Automatically enqueues a background job with the JSON data (including additional properties)
+3. **Background Workers**: Separate worker processes poll the job queue and process jobs asynchronously
+4. **Job Processing**: Workers perform various tasks like:
+   - Sending welcome emails
+   - Analyzing additional user properties
+   - Recording analytics metrics
+   - Setting up user profiles
+
+### Job Types
+
+- **user_created**: Process new user registration data
+- **data_analysis**: Perform data analysis on user information
+- **email_notification**: Send email notifications
+- **data_export**: Export data to external systems
+
+### Worker Architecture
+
+- **Multiple Workers**: Run multiple concurrent workers for parallel processing
+- **Job Queue**: SQLite-based job queue with priority and retry logic
+- **Graceful Shutdown**: Workers handle SIGINT/SIGTERM for clean shutdown
+- **Error Handling**: Failed jobs are retried with exponential backoff
+- **Monitoring**: Real-time job statistics and management
+
+### Usage Example
+
+```bash
+# Terminal 1: Start web server
+make run
+
+# Terminal 2: Start background workers
+make worker
+
+# Terminal 3: Create a user (triggers background job)
+curl -X POST http://localhost:8080/users \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com", "age": 25, "hobby": "programming"}'
+
+# Check job statistics
+make worker-stats
+```
+
+### Worker Management
+
+```bash
+# Show job queue statistics
+make worker-stats
+
+# List jobs by status
+go run worker-manager.go stats
+go run worker-manager.go list pending
+go run worker-manager.go list completed
+go run worker-manager.go list failed
+
+# Manually enqueue test jobs
+go run worker-manager.go enqueue user_created "Test message" 1
+go run worker-manager.go enqueue data_analysis "Analyze user behavior" 2
+go run worker-manager.go enqueue email_notification "Send newsletter" 0
+```

@@ -10,6 +10,47 @@ import (
 	"database/sql"
 )
 
+const CreateJob = `-- name: CreateJob :one
+INSERT INTO job_queue (job_type, payload, priority, max_retries, scheduled_at)
+VALUES (?, ?, ?, ?, ?)
+RETURNING id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at
+`
+
+type CreateJobParams struct {
+	JobType     string        `db:"job_type" json:"job_type"`
+	Payload     string        `db:"payload" json:"payload"`
+	Priority    sql.NullInt64 `db:"priority" json:"priority"`
+	MaxRetries  sql.NullInt64 `db:"max_retries" json:"max_retries"`
+	ScheduledAt sql.NullTime  `db:"scheduled_at" json:"scheduled_at"`
+}
+
+// Job Queue Operations
+func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (JobQueue, error) {
+	row := q.db.QueryRowContext(ctx, CreateJob,
+		arg.JobType,
+		arg.Payload,
+		arg.Priority,
+		arg.MaxRetries,
+		arg.ScheduledAt,
+	)
+	var i JobQueue
+	err := row.Scan(
+		&i.ID,
+		&i.JobType,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.MaxRetries,
+		&i.RetryCount,
+		&i.ErrorMessage,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const CreateUser = `-- name: CreateUser :one
 INSERT INTO users (email, age, name, bio, is_active, additional_data)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -59,6 +100,88 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 	return err
 }
 
+const GetJobByID = `-- name: GetJobByID :one
+SELECT id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at FROM job_queue
+WHERE id = ?
+`
+
+func (q *Queries) GetJobByID(ctx context.Context, id int64) (JobQueue, error) {
+	row := q.db.QueryRowContext(ctx, GetJobByID, id)
+	var i JobQueue
+	err := row.Scan(
+		&i.ID,
+		&i.JobType,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.MaxRetries,
+		&i.RetryCount,
+		&i.ErrorMessage,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const GetJobStats = `-- name: GetJobStats :one
+SELECT
+    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_count,
+    COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_count,
+    COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_count,
+    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count
+FROM job_queue
+`
+
+type GetJobStatsRow struct {
+	PendingCount    int64 `db:"pending_count" json:"pending_count"`
+	ProcessingCount int64 `db:"processing_count" json:"processing_count"`
+	CompletedCount  int64 `db:"completed_count" json:"completed_count"`
+	FailedCount     int64 `db:"failed_count" json:"failed_count"`
+}
+
+func (q *Queries) GetJobStats(ctx context.Context) (GetJobStatsRow, error) {
+	row := q.db.QueryRowContext(ctx, GetJobStats)
+	var i GetJobStatsRow
+	err := row.Scan(
+		&i.PendingCount,
+		&i.ProcessingCount,
+		&i.CompletedCount,
+		&i.FailedCount,
+	)
+	return i, err
+}
+
+const GetNextPendingJob = `-- name: GetNextPendingJob :one
+SELECT id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at FROM job_queue
+WHERE status = 'pending'
+  AND scheduled_at <= CURRENT_TIMESTAMP
+  AND retry_count < max_retries
+ORDER BY priority DESC, scheduled_at ASC
+LIMIT 1
+`
+
+func (q *Queries) GetNextPendingJob(ctx context.Context) (JobQueue, error) {
+	row := q.db.QueryRowContext(ctx, GetNextPendingJob)
+	var i JobQueue
+	err := row.Scan(
+		&i.ID,
+		&i.JobType,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.MaxRetries,
+		&i.RetryCount,
+		&i.ErrorMessage,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const GetUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, email, age, name, bio, is_active, additional_data, created_at, updated_at FROM users
 WHERE email = ?
@@ -103,6 +226,89 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return i, err
 }
 
+const IncrementJobRetry = `-- name: IncrementJobRetry :one
+UPDATE job_queue
+SET retry_count = retry_count + 1,
+    status = 'pending',
+    scheduled_at = datetime(CURRENT_TIMESTAMP, '+' || (retry_count + 1) * 5 || ' minutes'),
+    error_message = ?
+WHERE id = ?
+RETURNING id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at
+`
+
+type IncrementJobRetryParams struct {
+	ErrorMessage sql.NullString `db:"error_message" json:"error_message"`
+	ID           int64          `db:"id" json:"id"`
+}
+
+func (q *Queries) IncrementJobRetry(ctx context.Context, arg IncrementJobRetryParams) (JobQueue, error) {
+	row := q.db.QueryRowContext(ctx, IncrementJobRetry, arg.ErrorMessage, arg.ID)
+	var i JobQueue
+	err := row.Scan(
+		&i.ID,
+		&i.JobType,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.MaxRetries,
+		&i.RetryCount,
+		&i.ErrorMessage,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const ListJobs = `-- name: ListJobs :many
+SELECT id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at FROM job_queue
+WHERE status = ?
+ORDER BY created_at DESC
+LIMIT ?
+`
+
+type ListJobsParams struct {
+	Status string `db:"status" json:"status"`
+	Limit  int64  `db:"limit" json:"limit"`
+}
+
+func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]JobQueue, error) {
+	rows, err := q.db.QueryContext(ctx, ListJobs, arg.Status, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JobQueue{}
+	for rows.Next() {
+		var i JobQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobType,
+			&i.Payload,
+			&i.Status,
+			&i.Priority,
+			&i.MaxRetries,
+			&i.RetryCount,
+			&i.ErrorMessage,
+			&i.ScheduledAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ListUsers = `-- name: ListUsers :many
 SELECT id, email, age, name, bio, is_active, additional_data, created_at, updated_at FROM users
 WHERE is_active = true
@@ -141,6 +347,47 @@ func (q *Queries) ListUsers(ctx context.Context, limit int64) ([]User, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const UpdateJobStatus = `-- name: UpdateJobStatus :one
+UPDATE job_queue
+SET status = ?, started_at = ?, completed_at = ?, error_message = ?
+WHERE id = ?
+RETURNING id, job_type, payload, status, priority, max_retries, retry_count, error_message, scheduled_at, started_at, completed_at, created_at
+`
+
+type UpdateJobStatusParams struct {
+	Status       string         `db:"status" json:"status"`
+	StartedAt    sql.NullTime   `db:"started_at" json:"started_at"`
+	CompletedAt  sql.NullTime   `db:"completed_at" json:"completed_at"`
+	ErrorMessage sql.NullString `db:"error_message" json:"error_message"`
+	ID           int64          `db:"id" json:"id"`
+}
+
+func (q *Queries) UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) (JobQueue, error) {
+	row := q.db.QueryRowContext(ctx, UpdateJobStatus,
+		arg.Status,
+		arg.StartedAt,
+		arg.CompletedAt,
+		arg.ErrorMessage,
+		arg.ID,
+	)
+	var i JobQueue
+	err := row.Scan(
+		&i.ID,
+		&i.JobType,
+		&i.Payload,
+		&i.Status,
+		&i.Priority,
+		&i.MaxRetries,
+		&i.RetryCount,
+		&i.ErrorMessage,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const UpdateUser = `-- name: UpdateUser :one

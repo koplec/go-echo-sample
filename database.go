@@ -16,6 +16,7 @@ import (
 type DatabaseService struct {
 	db      *sql.DB
 	queries *db.Queries
+	jobQueue *JobQueueService
 }
 
 func NewDatabaseService(dbPath string) (*DatabaseService, error) {
@@ -34,9 +35,12 @@ func NewDatabaseService(dbPath string) (*DatabaseService, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	jobQueue := NewJobQueueService(database)
+
 	return &DatabaseService{
 		db:      database,
 		queries: queries,
+		jobQueue: jobQueue,
 	}, nil
 }
 
@@ -54,8 +58,27 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS job_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 3,
+    retry_count INTEGER DEFAULT 0,
+    error_message TEXT,
+    scheduled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);`
+CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+CREATE INDEX IF NOT EXISTS idx_job_queue_type ON job_queue(job_type);
+CREATE INDEX IF NOT EXISTS idx_job_queue_scheduled ON job_queue(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_priority ON job_queue(priority DESC, scheduled_at);`
 
 	if _, err := database.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
@@ -101,7 +124,32 @@ func (ds *DatabaseService) CreateUser(userReq generated.UserRequest, additionalP
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	return ds.convertDBUserToGenerated(dbUser)
+	user, err := ds.convertDBUserToGenerated(dbUser)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enqueue background job for user created
+	jobPayload := JobPayload{
+		UserID:          &user.Id,
+		UserData:        map[string]interface{}{
+			"id":        user.Id,
+			"email":     user.Email,
+			"age":       user.Age,
+			"name":      user.Name,
+			"bio":       user.Bio,
+			"is_active": user.IsActive,
+		},
+		AdditionalProps: additionalProps,
+	}
+
+	_, jobErr := ds.jobQueue.EnqueueJob(JobUserCreated, jobPayload, 1)
+	if jobErr != nil {
+		// Log error but don't fail the user creation
+		fmt.Printf("Failed to enqueue job for user %d: %v\n", user.Id, jobErr)
+	}
+
+	return user, nil
 }
 
 func (ds *DatabaseService) GetUserByID(id int64) (*generated.User, error) {

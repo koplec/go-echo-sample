@@ -21,15 +21,36 @@ clean:
 
 run:
 	@echo "Running server (default validation)..."
-	go run main-variants.go validator.go database.go
+	go run main-variants.go validator.go database.go job-queue.go
 
 run-flexible:
 	@echo "Running server (flexible validation - accepts any JSON)..."
-	VALIDATION_MODE=flexible go run main-variants.go validator.go database.go
+	VALIDATION_MODE=flexible go run main-variants.go validator.go database.go job-queue.go
 
 run-strict:
 	@echo "Running server (strict validation - rejects undefined properties)..."
-	VALIDATION_MODE=strict go run main-variants.go validator.go database.go
+	VALIDATION_MODE=strict go run main-variants.go validator.go database.go job-queue.go
+
+# Worker Commands
+worker:
+	@echo "Starting background workers..."
+	go run worker.go validator.go database.go job-queue.go
+
+worker-bg:
+	@echo "Starting background workers in background..."
+	go run worker.go validator.go database.go job-queue.go &
+
+worker-stats:
+	@echo "Showing job queue statistics..."
+	go run worker-manager.go validator.go database.go job-queue.go stats
+
+worker-list:
+	@echo "Listing pending jobs..."
+	go run worker-manager.go validator.go database.go job-queue.go list
+
+worker-enqueue:
+	@echo "Enqueuing test job..."
+	go run worker-manager.go validator.go database.go job-queue.go enqueue user_created "Test user creation job" 1
 
 test:
 	@echo "Testing default validation mode..."
