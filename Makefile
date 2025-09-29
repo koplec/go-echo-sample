@@ -20,37 +20,41 @@ clean:
 	rm -f *.db
 
 run:
-	@echo "Running server (default validation)..."
-	go run main-variants.go validator.go database.go job-queue.go
+	@echo "Running in-memory server..."
+	go run ./cmd/server
+
+run-variants:
+	@echo "Running database server (default validation)..."
+	go run ./cmd/server-variants
 
 run-flexible:
-	@echo "Running server (flexible validation - accepts any JSON)..."
-	VALIDATION_MODE=flexible go run main-variants.go validator.go database.go job-queue.go
+	@echo "Running database server (flexible validation - accepts any JSON)..."
+	VALIDATION_MODE=flexible go run ./cmd/server-variants
 
 run-strict:
-	@echo "Running server (strict validation - rejects undefined properties)..."
-	VALIDATION_MODE=strict go run main-variants.go validator.go database.go job-queue.go
+	@echo "Running database server (strict validation - rejects undefined properties)..."
+	VALIDATION_MODE=strict go run ./cmd/server-variants
 
 # Worker Commands
 worker:
 	@echo "Starting background workers..."
-	go run worker.go validator.go database.go job-queue.go
+	go run ./cmd/worker
 
 worker-bg:
 	@echo "Starting background workers in background..."
-	go run worker.go validator.go database.go job-queue.go &
+	go run ./cmd/worker &
 
 worker-stats:
 	@echo "Showing job queue statistics..."
-	go run worker-manager.go validator.go database.go job-queue.go stats
+	go run ./cmd/worker-manager stats
 
 worker-list:
 	@echo "Listing pending jobs..."
-	go run worker-manager.go validator.go database.go job-queue.go list
+	go run ./cmd/worker-manager list
 
 worker-enqueue:
 	@echo "Enqueuing test job..."
-	go run worker-manager.go validator.go database.go job-queue.go enqueue user_created "Test user creation job" 1
+	go run ./cmd/worker-manager enqueue user_created "Test user creation job" 1
 
 # Test Commands
 test-unit:

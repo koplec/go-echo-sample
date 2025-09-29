@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"openapi-validation-example/generated"
+	"openapi-validation-example/pkg/validation"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -74,7 +75,7 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	validationMiddleware, err := NewValidationMiddleware("openapi.yaml")
+	validationMiddleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	if err != nil {
 		e.Logger.Fatal("Failed to initialize validation middleware:", err)
 	}

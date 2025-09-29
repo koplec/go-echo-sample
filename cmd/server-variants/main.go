@@ -8,6 +8,9 @@ import (
 	"os"
 
 	"openapi-validation-example/generated"
+	"openapi-validation-example/pkg/database"
+	"openapi-validation-example/pkg/jobs"
+	"openapi-validation-example/pkg/validation"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -15,10 +18,10 @@ import (
 
 // UserHandler implements the generated.ServerInterface
 type UserHandler struct {
-	db *DatabaseService
+	db *database.DatabaseService
 }
 
-func NewUserHandler(db *DatabaseService) *UserHandler {
+func NewUserHandler(db *database.DatabaseService) *UserHandler {
 	return &UserHandler{
 		db: db,
 	}
@@ -99,14 +102,14 @@ func createApp(validationMode string) (*echo.Echo, error) {
 		specFile = "openapi.yaml"
 	}
 
-	validationMiddleware, err := NewValidationMiddleware(specFile)
+	validationMiddleware, err := validation.NewValidationMiddleware(specFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize validation middleware: %w", err)
 	}
 
 	e.Use(validationMiddleware.Validate())
 
-	db, err := NewDatabaseService("users.db")
+	db, err := database.NewDatabaseService("users.db")
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
