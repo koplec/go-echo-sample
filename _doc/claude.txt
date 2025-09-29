@@ -1,0 +1,34 @@
+以下の要件でGoのサンプルプロジェクトを作成してください:
+
+1. OpenAPI 3.0.3 の定義ファイル (openapi.yaml) を作成
+   - User リソースの CRUD API
+   - POST /users: ユーザー作成 (email必須, age必須で0以上)
+   - GET /users/{id}: ユーザー取得
+   - components/schemas に User を定義
+
+2. oapi-codegen で型とEchoサーバーのコードを生成
+   - go.mod, go.sum も作成
+   - 必要な generate コマンドを Makefile または README に記載
+
+3. kin-openapi を使ったバリデーションミドルウェアを実装
+   - 生JSONをOpenAPIスキーマに対してバリデーション
+   - バリデーションエラー時は400を返す
+   - エラーメッセージをわかりやすく整形
+
+4. main.go でEchoサーバーを起動
+   - バリデーションミドルウェアを適用
+   - POST /users のハンドラーで実際にバリデーションが動作することを確認
+
+5. 動作確認用のcurlコマンド例をREADMEに記載
+   - 正常系: 正しいリクエスト
+   - 異常系: emailなし、age負の値など
+
+プロジェクト構成:
+openapi-validation-example/
+├── openapi.yaml
+├── go.mod
+├── Makefile
+├── main.go
+├── validator.go (kin-openapiを使ったバリデーション)
+├── generated/ (oapi-codegenの出力)
+└── README.md
