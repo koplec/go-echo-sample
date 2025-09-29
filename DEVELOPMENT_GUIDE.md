@@ -555,6 +555,657 @@ func EfficientMiddleware() echo.MiddlewareFunc {
 }
 ```
 
+## 📦 ライブラリの導入方法と基本的な使い方
+
+### 前提条件
+- Go 1.21 以降
+- SQLite3（modernc.org/sqlite を使用するため、CGOは不要）
+
+### プロジェクト初期化
+
+```bash
+# 新しいGoモジュールを作成
+go mod init your-project-name
+
+# 必要なライブラリをインストール
+go get github.com/labstack/echo/v4
+go get github.com/getkin/kin-openapi
+go get github.com/oapi-codegen/runtime
+go get modernc.org/sqlite
+
+# 開発ツールをインストール
+go install github.com/deepmap/oapi-codegen/cmd/oapi-codegen@latest
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+```
+
+### 1. Echo Framework
+
+#### インストール
+```bash
+go get github.com/labstack/echo/v4
+```
+
+#### 基本的な使い方
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v4/middleware"
+)
+
+func main() {
+    // Echoインスタンスを作成
+    e := echo.New()
+
+    // ミドルウェアを追加
+    e.Use(middleware.Logger())
+    e.Use(middleware.Recover())
+
+    // ルートを定義
+    e.GET("/", func(c echo.Context) error {
+        return c.String(http.StatusOK, "Hello, World!")
+    })
+
+    e.POST("/users", func(c echo.Context) error {
+        // リクエストボディを構造体にバインド
+        user := new(User)
+        if err := c.Bind(user); err != nil {
+            return err
+        }
+
+        // JSONレスポンスを返す
+        return c.JSON(http.StatusOK, user)
+    })
+
+    // サーバーを起動
+    e.Logger.Fatal(e.Start(":1323"))
+}
+
+type User struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+```
+
+### 2. kin-openapi
+
+#### インストール
+```bash
+go get github.com/getkin/kin-openapi
+```
+
+#### OpenAPIスペック検証の基本使用法
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/getkin/kin-openapi/openapi3"
+)
+
+func main() {
+    // OpenAPIスペックを読み込み
+    loader := &openapi3.Loader{Context: context.Background()}
+    doc, err := loader.LoadFromFile("openapi.yaml")
+    if err != nil {
+        panic(err)
+    }
+
+    // スペックを検証
+    err = doc.Validate(context.Background())
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Println("OpenAPI spec is valid!")
+}
+```
+
+#### リクエストバリデーション
+
+```go
+import (
+    "github.com/getkin/kin-openapi/openapi3filter"
+    "github.com/getkin/kin-openapi/routers/gorillamux"
+)
+
+func validateRequest() {
+    // ルーターを作成
+    router, err := gorillamux.NewRouter(doc)
+    if err != nil {
+        panic(err)
+    }
+
+    // HTTPリクエストの例（実際のリクエストを使用）
+    req, _ := http.NewRequest("POST", "/users", strings.NewReader(`{"email":"test@example.com","age":25}`))
+    req.Header.Set("Content-Type", "application/json")
+
+    // ルートを見つける
+    route, pathParams, err := router.FindRoute(req)
+    if err != nil {
+        panic(err)
+    }
+
+    // バリデーションを実行
+    requestValidationInput := &openapi3filter.RequestValidationInput{
+        Request:    req,
+        PathParams: pathParams,
+        Route:      route,
+    }
+
+    err = openapi3filter.ValidateRequest(context.Background(), requestValidationInput)
+    if err != nil {
+        fmt.Printf("Validation failed: %v\n", err)
+    } else {
+        fmt.Println("Request is valid!")
+    }
+}
+```
+
+### 3. oapi-codegen
+
+#### インストール
+```bash
+go install github.com/deepmap/oapi-codegen/cmd/oapi-codegen@latest
+```
+
+#### 基本的な使い方
+
+```bash
+# 型定義を生成
+oapi-codegen -package generated -generate types openapi.yaml > generated/types.go
+
+# Echoサーバーコードを生成
+oapi-codegen -package generated -generate echo openapi.yaml > generated/server.go
+
+# クライアントコードを生成
+oapi-codegen -package client -generate client openapi.yaml > client/client.go
+```
+
+#### 設定ファイルを使用した生成
+
+`oapi-codegen.yaml`:
+```yaml
+package: generated
+generate:
+  - types
+  - echo
+output: generated.go
+```
+
+```bash
+oapi-codegen --config oapi-codegen.yaml openapi.yaml
+```
+
+#### 生成されたコードの使用例
+
+```go
+// 生成された型を使用
+import "your-project/generated"
+
+func createUser(c echo.Context) error {
+    var req generated.UserRequest
+    if err := c.Bind(&req); err != nil {
+        return err
+    }
+
+    // 生成された型は適切なJSONタグとバリデーションを持つ
+    user := generated.User{
+        Id:    1,
+        Email: req.Email,
+        Age:   req.Age,
+    }
+
+    return c.JSON(http.StatusCreated, user)
+}
+```
+
+### 4. sqlc
+
+#### インストール
+```bash
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+```
+
+#### プロジェクト初期化
+
+```bash
+# sqlcの設定ファイルを作成
+sqlc init
+```
+
+#### 設定ファイル `sqlc.yaml`
+
+```yaml
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "queries.sql"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "db"
+        sql_package: "database/sql"
+        emit_json_tags: true
+        emit_db_tags: true
+        emit_empty_slices: true
+        emit_exported_queries: true
+```
+
+#### スキーマファイル `schema.sql`
+
+```sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    age INTEGER NOT NULL,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### クエリファイル `queries.sql`
+
+```sql
+-- name: GetUser :one
+SELECT * FROM users
+WHERE id = ? LIMIT 1;
+
+-- name: ListUsers :many
+SELECT * FROM users
+ORDER BY created_at DESC;
+
+-- name: CreateUser :one
+INSERT INTO users (email, age, name)
+VALUES (?, ?, ?)
+RETURNING *;
+
+-- name: UpdateUser :one
+UPDATE users
+SET email = ?, age = ?, name = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteUser :exec
+DELETE FROM users
+WHERE id = ?;
+```
+
+#### コード生成
+
+```bash
+sqlc generate
+```
+
+#### 生成されたコードの使用例
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "your-project/db"
+    _ "modernc.org/sqlite"
+)
+
+func main() {
+    // データベース接続
+    database, err := sql.Open("sqlite", "test.db")
+    if err != nil {
+        panic(err)
+    }
+    defer database.Close()
+
+    // sqlcで生成されたQueriesを作成
+    queries := db.New(database)
+
+    // ユーザーを作成
+    user, err := queries.CreateUser(context.Background(), db.CreateUserParams{
+        Email: "test@example.com",
+        Age:   25,
+        Name:  sql.NullString{String: "John Doe", Valid: true},
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Created user: %+v\n", user)
+
+    // ユーザーを取得
+    fetchedUser, err := queries.GetUser(context.Background(), user.ID)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Fetched user: %+v\n", fetchedUser)
+
+    // 全ユーザーを取得
+    users, err := queries.ListUsers(context.Background())
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("All users: %+v\n", users)
+}
+```
+
+### 5. modernc.org/sqlite
+
+#### インストール
+```bash
+go get modernc.org/sqlite
+```
+
+#### 特徴
+- Pure Go実装（CGO不要）
+- SQLite3との互換性
+- クロスコンパイル対応
+- 軽量で高速
+
+#### 基本的な使い方
+
+```go
+import (
+    "database/sql"
+    _ "modernc.org/sqlite" // ドライバーを登録
+)
+
+func main() {
+    // データベース接続（ファイル）
+    db, err := sql.Open("sqlite", "example.db")
+    if err != nil {
+        panic(err)
+    }
+    defer db.Close()
+
+    // インメモリデータベース
+    memDB, err := sql.Open("sqlite", ":memory:")
+    if err != nil {
+        panic(err)
+    }
+    defer memDB.Close()
+
+    // テーブル作成
+    _, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE
+        )
+    `)
+    if err != nil {
+        panic(err)
+    }
+
+    // データ挿入
+    result, err := db.Exec("INSERT INTO users (name, email) VALUES (?, ?)", "John", "john@example.com")
+    if err != nil {
+        panic(err)
+    }
+
+    id, _ := result.LastInsertId()
+    fmt.Printf("Inserted user with ID: %d\n", id)
+
+    // データ取得
+    var name, email string
+    err = db.QueryRow("SELECT name, email FROM users WHERE id = ?", id).Scan(&name, &email)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("User: %s (%s)\n", name, email)
+}
+```
+
+### 6. 統合開発フロー
+
+#### 1. OpenAPIスペック作成
+
+```yaml
+# openapi.yaml
+openapi: 3.0.3
+info:
+  title: Sample API
+  version: 1.0.0
+paths:
+  /users:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: {type: integer}
+        email: {type: string, format: email}
+        name: {type: string}
+    UserRequest:
+      type: object
+      required: [email]
+      properties:
+        email: {type: string, format: email}
+        name: {type: string}
+```
+
+#### 2. データベーススキーマ作成
+
+```sql
+-- schema.sql
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### 3. SQLクエリ定義
+
+```sql
+-- queries.sql
+-- name: CreateUser :one
+INSERT INTO users (email, name) VALUES (?, ?) RETURNING *;
+
+-- name: GetUser :one
+SELECT * FROM users WHERE id = ?;
+```
+
+#### 4. コード生成スクリプト
+
+```bash
+#!/bin/bash
+# generate.sh
+
+echo "Generating OpenAPI types..."
+oapi-codegen -package generated -generate types openapi.yaml > generated/types.go
+
+echo "Generating Echo server..."
+oapi-codegen -package generated -generate echo openapi.yaml > generated/server.go
+
+echo "Generating database code..."
+sqlc generate
+
+echo "Code generation completed!"
+```
+
+#### 5. 統合実装例
+
+```go
+package main
+
+import (
+    "context"
+    "database/sql"
+    "net/http"
+
+    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v4/middleware"
+
+    "your-project/db"
+    "your-project/generated"
+
+    _ "modernc.org/sqlite"
+)
+
+type Server struct {
+    db      *sql.DB
+    queries *db.Queries
+}
+
+func NewServer(dbPath string) (*Server, error) {
+    database, err := sql.Open("sqlite", dbPath)
+    if err != nil {
+        return nil, err
+    }
+
+    return &Server{
+        db:      database,
+        queries: db.New(database),
+    }, nil
+}
+
+func (s *Server) CreateUser(c echo.Context) error {
+    var req generated.UserRequest
+    if err := c.Bind(&req); err != nil {
+        return err
+    }
+
+    // データベースにユーザーを作成
+    dbUser, err := s.queries.CreateUser(context.Background(), db.CreateUserParams{
+        Email: string(req.Email),
+        Name:  sql.NullString{String: *req.Name, Valid: req.Name != nil},
+    })
+    if err != nil {
+        return err
+    }
+
+    // レスポンス用の構造体に変換
+    user := generated.User{
+        Id:    dbUser.ID,
+        Email: generated.UserEmail(dbUser.Email),
+    }
+    if dbUser.Name.Valid {
+        user.Name = &dbUser.Name.String
+    }
+
+    return c.JSON(http.StatusCreated, user)
+}
+
+func main() {
+    server, err := NewServer("app.db")
+    if err != nil {
+        panic(err)
+    }
+    defer server.db.Close()
+
+    e := echo.New()
+    e.Use(middleware.Logger())
+    e.Use(middleware.Recover())
+
+    // バリデーションミドルウェア（前述の実装を使用）
+    validationMiddleware, _ := NewValidationMiddleware("openapi.yaml")
+    e.Use(validationMiddleware.Validate())
+
+    e.POST("/users", server.CreateUser)
+
+    e.Logger.Fatal(e.Start(":8080"))
+}
+```
+
+### 7. Makefileでの自動化
+
+```makefile
+.PHONY: install generate build run clean
+
+# 依存関係のインストール
+install:
+	go mod tidy
+	go install github.com/deepmap/oapi-codegen/cmd/oapi-codegen@latest
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+
+# コード生成
+generate:
+	@echo "Generating OpenAPI code..."
+	oapi-codegen -package generated -generate types openapi.yaml > generated/types.go
+	oapi-codegen -package generated -generate echo openapi.yaml > generated/server.go
+	@echo "Generating database code..."
+	sqlc generate
+
+# ビルド
+build: generate
+	go build -o bin/app ./cmd/server
+
+# 実行
+run: generate
+	go run ./cmd/server
+
+# クリーンアップ
+clean:
+	rm -rf generated/ db/ bin/
+	rm -f *.db
+```
+
+### 8. トラブルシューティング
+
+#### よくある問題と解決方法
+
+**1. oapi-codegenで生成したコードでimportエラー**
+```bash
+# runtime パッケージを追加
+go get github.com/oapi-codegen/runtime
+```
+
+**2. sqlcでSQLite関数が認識されない**
+```yaml
+# sqlc.yaml
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "queries.sql"
+    schema: "schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "db"
+        # SQLite関数を有効化
+        emit_json_tags: true
+        emit_db_tags: true
+```
+
+**3. modernc.org/sqliteでCGOエラー**
+```bash
+# Pure Go実装なのでCGOは不要
+export CGO_ENABLED=0
+go build
+```
+
+**4. OpenAPIバリデーションが効かない**
+```go
+// ミドルウェアの登録順序を確認
+e.Use(middleware.Logger())      // 1. ログ
+e.Use(middleware.Recover())     // 2. リカバリー
+e.Use(validationMiddleware.Validate()) // 3. バリデーション（最後）
+```
+
 ## 🔧 技術スタック詳細
 
 ### 1. OpenAPI + oapi-codegen
