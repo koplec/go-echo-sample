@@ -6,7 +6,10 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"time"
+	"strings"
+
+	"openapi-validation-example/pkg/database"
+	"openapi-validation-example/pkg/jobs"
 )
 
 func main() {
@@ -21,7 +24,7 @@ func main() {
 		dbPath = os.Args[2]
 	}
 
-	dbService, err := NewDatabaseService(dbPath)
+	dbService, err := database.NewDatabaseService(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -74,14 +77,14 @@ func printUsage() {
 	fmt.Println("  pending, processing, completed, failed")
 }
 
-func showJobStats(dbService *DatabaseService) {
-	stats, err := dbService.jobQueue.GetJobStats()
+func showJobStats(dbService *database.DatabaseService) {
+	stats, err := dbService.GetJobQueue().GetJobStats()
 	if err != nil {
 		log.Fatalf("Failed to get job stats: %v", err)
 	}
 
 	fmt.Println("📊 Job Queue Statistics")
-	fmt.Println("=" * 40)
+	fmt.Println(strings.Repeat("=", 40))
 	fmt.Printf("Pending:    %d jobs\n", stats.PendingCount)
 	fmt.Printf("Processing: %d jobs\n", stats.ProcessingCount)
 	fmt.Printf("Completed:  %d jobs\n", stats.CompletedCount)
@@ -90,14 +93,14 @@ func showJobStats(dbService *DatabaseService) {
 		stats.PendingCount+stats.ProcessingCount+stats.CompletedCount+stats.FailedCount)
 }
 
-func listJobs(dbService *DatabaseService, status string) {
-	jobs, err := dbService.jobQueue.ListJobs(status, 20)
+func listJobs(dbService *database.DatabaseService, status string) {
+	jobs, err := dbService.GetJobQueue().ListJobs(status, 20)
 	if err != nil {
 		log.Fatalf("Failed to list jobs: %v", err)
 	}
 
 	fmt.Printf("📋 Jobs with status '%s' (last 20)\n", status)
-	fmt.Println("=" * 60)
+	fmt.Println(strings.Repeat("=", 60))
 
 	if len(jobs) == 0 {
 		fmt.Printf("No jobs found with status '%s'\n", status)
@@ -105,15 +108,30 @@ func listJobs(dbService *DatabaseService, status string) {
 	}
 
 	for _, job := range jobs {
+		var priority, retryCount, maxRetries int64
+		if job.Priority.Valid {
+			priority = job.Priority.Int64
+		}
+		if job.RetryCount.Valid {
+			retryCount = job.RetryCount.Int64
+		}
+		if job.MaxRetries.Valid {
+			maxRetries = job.MaxRetries.Int64
+		}
+
 		fmt.Printf("ID: %d | Type: %s | Priority: %d | Retries: %d/%d\n",
-			job.ID, job.JobType, job.Priority, job.RetryCount, job.MaxRetries)
+			job.ID, job.JobType, priority, retryCount, maxRetries)
 
 		if job.ErrorMessage.Valid && job.ErrorMessage.String != "" {
 			fmt.Printf("  Error: %s\n", job.ErrorMessage.String)
 		}
 
 		// Show payload preview
-		var payload JobPayload
+		type JobPayloadPreview struct {
+			UserID  *int64 `json:"user_id,omitempty"`
+			Message string `json:"message,omitempty"`
+		}
+		var payload JobPayloadPreview
 		if err := json.Unmarshal([]byte(job.Payload), &payload); err == nil {
 			if payload.UserID != nil {
 				fmt.Printf("  User ID: %d\n", *payload.UserID)
@@ -123,12 +141,14 @@ func listJobs(dbService *DatabaseService, status string) {
 			}
 		}
 
-		fmt.Printf("  Created: %s\n", job.CreatedAt.Format("2006-01-02 15:04:05"))
+		if job.CreatedAt.Valid {
+			fmt.Printf("  Created: %s\n", job.CreatedAt.Time.Format("2006-01-02 15:04:05"))
+		}
 		fmt.Println()
 	}
 }
 
-func enqueueTestJob(dbService *DatabaseService, jobTypeStr, message string, args []string) {
+func enqueueTestJob(dbService *database.DatabaseService, jobTypeStr, message string, args []string) {
 	priority := 0
 	if len(args) > 0 {
 		if p, err := strconv.Atoi(args[0]); err == nil {
@@ -136,29 +156,29 @@ func enqueueTestJob(dbService *DatabaseService, jobTypeStr, message string, args
 		}
 	}
 
-	var jobType JobType
+	var jobType jobs.JobType
 	switch jobTypeStr {
 	case "user_created":
-		jobType = JobUserCreated
+		jobType = jobs.JobUserCreated
 	case "data_analysis":
-		jobType = JobDataAnalysis
+		jobType = jobs.JobDataAnalysis
 	case "email_notification":
-		jobType = JobEmailNotification
+		jobType = jobs.JobEmailNotification
 	case "data_export":
-		jobType = JobDataExport
+		jobType = jobs.JobDataExport
 	default:
 		fmt.Printf("Invalid job type: %s\n", jobTypeStr)
 		fmt.Println("Valid types: user_created, data_analysis, email_notification, data_export")
 		os.Exit(1)
 	}
 
-	payload := JobPayload{
+	payload := jobs.JobPayload{
 		Message: message,
 	}
 
 	// Add specific payload data based on job type
 	switch jobType {
-	case JobUserCreated:
+	case jobs.JobUserCreated:
 		userID := int64(999)
 		payload.UserID = &userID
 		payload.UserData = map[string]interface{}{
@@ -170,22 +190,28 @@ func enqueueTestJob(dbService *DatabaseService, jobTypeStr, message string, args
 			"test_data": true,
 			"source":    "worker-manager",
 		}
-	case JobEmailNotification:
+	case jobs.JobEmailNotification:
 		payload.Recipients = []string{"admin@example.com", "user@example.com"}
 	}
 
-	job, err := dbService.jobQueue.EnqueueJob(jobType, payload, priority)
+	job, err := dbService.GetJobQueue().EnqueueJob(jobType, payload, priority)
 	if err != nil {
 		log.Fatalf("Failed to enqueue job: %v", err)
 	}
 
 	fmt.Printf("✅ Job enqueued successfully!\n")
-	fmt.Printf("ID: %d | Type: %s | Priority: %d\n", job.ID, job.JobType, job.Priority)
-	fmt.Printf("Scheduled: %s\n", job.ScheduledAt.Format("2006-01-02 15:04:05"))
+	var jobPriority int64
+	if job.Priority.Valid {
+		jobPriority = job.Priority.Int64
+	}
+	fmt.Printf("ID: %d | Type: %s | Priority: %d\n", job.ID, job.JobType, jobPriority)
+	if job.ScheduledAt.Valid {
+		fmt.Printf("Scheduled: %s\n", job.ScheduledAt.Time.Format("2006-01-02 15:04:05"))
+	}
 }
 
-func clearJobs(dbService *DatabaseService, status string) {
-	jobs, err := dbService.jobQueue.ListJobs(status, 1000)
+func clearJobs(dbService *database.DatabaseService, status string) {
+	jobs, err := dbService.GetJobQueue().ListJobs(status, 1000)
 	if err != nil {
 		log.Fatalf("Failed to list jobs: %v", err)
 	}

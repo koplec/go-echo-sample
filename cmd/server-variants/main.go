@@ -9,7 +9,6 @@ import (
 
 	"openapi-validation-example/generated"
 	"openapi-validation-example/pkg/database"
-	"openapi-validation-example/pkg/jobs"
 	"openapi-validation-example/pkg/validation"
 
 	"github.com/labstack/echo/v4"

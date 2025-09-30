@@ -188,3 +188,7 @@ func (ds *DatabaseService) convertDBUserToGenerated(dbUser db.User) (*generated.
 func (ds *DatabaseService) Close() error {
 	return ds.db.Close()
 }
+
+func (ds *DatabaseService) GetJobQueue() *jobs.JobQueueService {
+	return ds.jobQueue
+}

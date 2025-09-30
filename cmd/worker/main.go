@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,29 +11,31 @@ import (
 	"time"
 
 	"openapi-validation-example/db"
+	"openapi-validation-example/pkg/database"
+	"openapi-validation-example/pkg/jobs"
 )
 
 type Worker struct {
 	id           int
-	jobQueue     *JobQueueService
+	jobQueue     *jobs.JobQueueService
 	stopCh       chan struct{}
 	wg           *sync.WaitGroup
 	processingWg *sync.WaitGroup
 }
 
 type JobProcessor interface {
-	Process(job *db.JobQueue, payload JobPayload) error
-	JobType() JobType
+	Process(job *db.JobQueue, payload jobs.JobPayload) error
+	JobType() jobs.JobType
 }
 
 // UserCreatedProcessor handles user creation jobs
 type UserCreatedProcessor struct{}
 
-func (p *UserCreatedProcessor) JobType() JobType {
-	return JobUserCreated
+func (p *UserCreatedProcessor) JobType() jobs.JobType {
+	return jobs.JobUserCreated
 }
 
-func (p *UserCreatedProcessor) Process(job *db.JobQueue, payload JobPayload) error {
+func (p *UserCreatedProcessor) Process(job *db.JobQueue, payload jobs.JobPayload) error {
 	log.Printf("Processing user created job %d for user %d", job.ID, *payload.UserID)
 
 	// Simulate various processing tasks
@@ -73,11 +74,11 @@ func (p *UserCreatedProcessor) Process(job *db.JobQueue, payload JobPayload) err
 // DataAnalysisProcessor handles data analysis jobs
 type DataAnalysisProcessor struct{}
 
-func (p *DataAnalysisProcessor) JobType() JobType {
-	return JobDataAnalysis
+func (p *DataAnalysisProcessor) JobType() jobs.JobType {
+	return jobs.JobDataAnalysis
 }
 
-func (p *DataAnalysisProcessor) Process(job *db.JobQueue, payload JobPayload) error {
+func (p *DataAnalysisProcessor) Process(job *db.JobQueue, payload jobs.JobPayload) error {
 	log.Printf("Processing data analysis job %d", job.ID)
 
 	time.Sleep(time.Second * 2) // Simulate longer analysis
@@ -91,11 +92,11 @@ func (p *DataAnalysisProcessor) Process(job *db.JobQueue, payload JobPayload) er
 // EmailNotificationProcessor handles email notification jobs
 type EmailNotificationProcessor struct{}
 
-func (p *EmailNotificationProcessor) JobType() JobType {
-	return JobEmailNotification
+func (p *EmailNotificationProcessor) JobType() jobs.JobType {
+	return jobs.JobEmailNotification
 }
 
-func (p *EmailNotificationProcessor) Process(job *db.JobQueue, payload JobPayload) error {
+func (p *EmailNotificationProcessor) Process(job *db.JobQueue, payload jobs.JobPayload) error {
 	log.Printf("Processing email notification job %d", job.ID)
 
 	time.Sleep(time.Millisecond * 300)
@@ -107,7 +108,7 @@ func (p *EmailNotificationProcessor) Process(job *db.JobQueue, payload JobPayloa
 	return nil
 }
 
-func NewWorker(id int, jobQueue *JobQueueService, wg *sync.WaitGroup) *Worker {
+func NewWorker(id int, jobQueue *jobs.JobQueueService, wg *sync.WaitGroup) *Worker {
 	return &Worker{
 		id:           id,
 		jobQueue:     jobQueue,
@@ -120,10 +121,10 @@ func NewWorker(id int, jobQueue *JobQueueService, wg *sync.WaitGroup) *Worker {
 func (w *Worker) Start() {
 	defer w.wg.Done()
 
-	processors := map[JobType]JobProcessor{
-		JobUserCreated:      &UserCreatedProcessor{},
-		JobDataAnalysis:     &DataAnalysisProcessor{},
-		JobEmailNotification: &EmailNotificationProcessor{},
+	processors := map[jobs.JobType]JobProcessor{
+		jobs.JobUserCreated:       &UserCreatedProcessor{},
+		jobs.JobDataAnalysis:      &DataAnalysisProcessor{},
+		jobs.JobEmailNotification: &EmailNotificationProcessor{},
 	}
 
 	log.Printf("Worker %d started", w.id)
@@ -144,7 +145,7 @@ func (w *Worker) Start() {
 	}
 }
 
-func (w *Worker) processNextJob(processors map[JobType]JobProcessor) {
+func (w *Worker) processNextJob(processors map[jobs.JobType]JobProcessor) {
 	job, err := w.jobQueue.GetNextJob()
 	if err != nil {
 		log.Printf("Worker %d: Error getting next job: %v", w.id, err)
@@ -163,7 +164,7 @@ func (w *Worker) processNextJob(processors map[JobType]JobProcessor) {
 		log.Printf("Worker %d: Processing job %d (type: %s)", w.id, job.ID, job.JobType)
 
 		// Parse payload
-		var payload JobPayload
+		var payload jobs.JobPayload
 		if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
 			log.Printf("Worker %d: Error parsing job payload: %v", w.id, err)
 			w.jobQueue.FailJob(job.ID, fmt.Sprintf("Failed to parse payload: %v", err), false)
@@ -171,7 +172,7 @@ func (w *Worker) processNextJob(processors map[JobType]JobProcessor) {
 		}
 
 		// Find processor
-		processor, exists := processors[JobType(job.JobType)]
+		processor, exists := processors[jobs.JobType(job.JobType)]
 		if !exists {
 			log.Printf("Worker %d: No processor found for job type: %s", w.id, job.JobType)
 			w.jobQueue.FailJob(job.ID, fmt.Sprintf("No processor for job type: %s", job.JobType), false)
@@ -183,7 +184,14 @@ func (w *Worker) processNextJob(processors map[JobType]JobProcessor) {
 			log.Printf("Worker %d: Job %d failed: %v", w.id, job.ID, err)
 
 			// Retry logic
-			shouldRetry := job.RetryCount < job.MaxRetries
+			var retryCount, maxRetries int64
+			if job.RetryCount.Valid {
+				retryCount = job.RetryCount.Int64
+			}
+			if job.MaxRetries.Valid {
+				maxRetries = job.MaxRetries.Int64
+			}
+			shouldRetry := retryCount < maxRetries
 			w.jobQueue.FailJob(job.ID, err.Error(), shouldRetry)
 		} else {
 			log.Printf("Worker %d: Job %d completed successfully", w.id, job.ID)
@@ -205,7 +213,7 @@ func main() {
 	log.Printf("Starting worker manager with database: %s", dbPath)
 
 	// Initialize database
-	dbService, err := NewDatabaseService(dbPath)
+	dbService, err := database.NewDatabaseService(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -224,7 +232,7 @@ func main() {
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {
-		workers[i] = NewWorker(i+1, dbService.jobQueue, &wg)
+		workers[i] = NewWorker(i+1, dbService.GetJobQueue(), &wg)
 		wg.Add(1)
 		go workers[i].Start()
 	}
@@ -245,7 +253,7 @@ func main() {
 			case <-sigCh:
 				return
 			case <-ticker.C:
-				stats, err := dbService.jobQueue.GetJobStats()
+				stats, err := dbService.GetJobQueue().GetJobStats()
 				if err == nil {
 					log.Printf("Job Stats - Pending: %d, Processing: %d, Completed: %d, Failed: %d",
 						stats.PendingCount, stats.ProcessingCount, stats.CompletedCount, stats.FailedCount)
