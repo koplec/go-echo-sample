@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"openapi-validation-example/generated"
+	"openapi-validation-example/internal/handlers"
+	"openapi-validation-example/pkg/database"
+	"openapi-validation-example/pkg/validation"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -16,7 +19,7 @@ import (
 )
 
 // setupTestAppVariants creates a test Echo app with database UserHandler
-func setupTestAppVariants(t *testing.T, validationMode string) (*echo.Echo, *UserHandler, *DatabaseService) {
+func setupTestAppVariants(t *testing.T, validationMode string) (*echo.Echo, *handlers.UserHandler, *database.DatabaseService) {
 	e := echo.New()
 
 	// Setup validation middleware
@@ -30,7 +33,7 @@ func setupTestAppVariants(t *testing.T, validationMode string) (*echo.Echo, *Use
 		specFile = "openapi.yaml"
 	}
 
-	validationMiddleware, err := NewValidationMiddleware(specFile)
+	validationMiddleware, err := validation.NewValidationMiddleware(specFile)
 	require.NoError(t, err)
 	e.Use(validationMiddleware.Validate())
 
@@ -38,17 +41,17 @@ func setupTestAppVariants(t *testing.T, validationMode string) (*echo.Echo, *Use
 	testDBPath := "test_users_" + validationMode + ".db"
 	os.Remove(testDBPath) // Clean up any existing test DB
 
-	db, err := NewDatabaseService(testDBPath)
+	db, err := database.NewDatabaseService(testDBPath)
 	require.NoError(t, err)
 
-	userHandler := NewUserHandler(db)
+	userHandler := handlers.NewUserHandler(db)
 
 	// Register routes
 	generated.RegisterHandlers(e, userHandler)
 
 	// Clean up function
 	t.Cleanup(func() {
-		db.queries.db.Close()
+		db.Close()
 		os.Remove(testDBPath)
 	})
 
@@ -109,7 +112,7 @@ func TestDatabaseUserHandler_CreateUser(t *testing.T) {
 }
 
 func TestDatabaseUserHandler_GetUser(t *testing.T) {
-	e, _, db := setupTestAppVariants(t, "default")
+	e, _, dbService := setupTestAppVariants(t, "default")
 
 	// Create a test user directly in the database
 	userReq := generated.UserRequest{
@@ -117,7 +120,7 @@ func TestDatabaseUserHandler_GetUser(t *testing.T) {
 		Age:   28,
 	}
 
-	user, err := db.CreateUser(userReq, nil)
+	user, err := dbService.CreateUser(userReq, nil)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -223,7 +226,7 @@ func TestValidationModes_Integration(t *testing.T) {
 }
 
 func TestDatabaseUserHandler_JobEnqueuing(t *testing.T) {
-	e, _, db := setupTestAppVariants(t, "default")
+	e, _, _ := setupTestAppVariants(t, "default")
 
 	// Create a user (should trigger job enqueuing)
 	reqBody := `{"email": "job-test@example.com", "age": 32, "name": "Job Test User"}`

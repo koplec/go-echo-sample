@@ -8,15 +8,16 @@ import (
 
 	"openapi-validation-example/db"
 	"openapi-validation-example/generated"
+	"openapi-validation-example/pkg/jobs"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	_ "modernc.org/sqlite"
 )
 
 type DatabaseService struct {
-	db      *sql.DB
-	queries *db.Queries
-	jobQueue *JobQueueService
+	db       *sql.DB
+	queries  *db.Queries
+	jobQueue *jobs.JobQueueService
 }
 
 func NewDatabaseService(dbPath string) (*DatabaseService, error) {
@@ -35,7 +36,7 @@ func NewDatabaseService(dbPath string) (*DatabaseService, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
-	jobQueue := NewJobQueueService(database)
+	jobQueue := jobs.NewJobQueueService(database)
 
 	return &DatabaseService{
 		db:      database,
@@ -130,7 +131,7 @@ func (ds *DatabaseService) CreateUser(userReq generated.UserRequest, additionalP
 	}
 
 	// Enqueue background job for user created
-	jobPayload := JobPayload{
+	jobPayload := jobs.JobPayload{
 		UserID:          &user.Id,
 		UserData:        map[string]interface{}{
 			"id":        user.Id,
@@ -143,7 +144,7 @@ func (ds *DatabaseService) CreateUser(userReq generated.UserRequest, additionalP
 		AdditionalProps: additionalProps,
 	}
 
-	_, jobErr := ds.jobQueue.EnqueueJob(JobUserCreated, jobPayload, 1)
+	_, jobErr := ds.jobQueue.EnqueueJob(jobs.JobUserCreated, jobPayload, 1)
 	if jobErr != nil {
 		// Log error but don't fail the user creation
 		fmt.Printf("Failed to enqueue job for user %d: %v\n", user.Id, jobErr)

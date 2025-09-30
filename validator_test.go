@@ -1,6 +1,8 @@
 package main
 
 import (
+	"openapi-validation-example/pkg/validation"
+
 	"bytes"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +43,7 @@ func TestValidationMiddleware_NewValidationMiddleware(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			middleware, err := NewValidationMiddleware(tt.specFile)
+			middleware, err := validation.NewValidationMiddleware(tt.specFile)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -49,14 +51,14 @@ func TestValidationMiddleware_NewValidationMiddleware(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, middleware)
-				assert.NotNil(t, middleware.router)
+				// router is not exported
 			}
 		})
 	}
 }
 
 func TestValidationMiddleware_Validate(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -167,7 +169,7 @@ func TestValidationMiddleware_Validate(t *testing.T) {
 }
 
 func TestValidationMiddleware_FlexibleMode(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi-flexible.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi-flexible.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -217,7 +219,7 @@ func TestValidationMiddleware_FlexibleMode(t *testing.T) {
 }
 
 func TestValidationMiddleware_StrictMode(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi-strict.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi-strict.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -267,7 +269,7 @@ func TestValidationMiddleware_StrictMode(t *testing.T) {
 }
 
 func TestValidationMiddleware_GetUserValidation(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -328,7 +330,7 @@ func TestValidationMiddleware_GetUserValidation(t *testing.T) {
 }
 
 func TestValidationMiddleware_ContentTypeValidation(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -391,7 +393,7 @@ func TestValidationMiddleware_ContentTypeValidation(t *testing.T) {
 }
 
 func TestValidationMiddleware_EdgeCases(t *testing.T) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -457,7 +459,7 @@ func generateLongString(length int) string {
 
 // Benchmark validation performance
 func BenchmarkValidationMiddleware_ValidRequest(b *testing.B) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(b, err)
 
 	e := echo.New()
@@ -479,7 +481,7 @@ func BenchmarkValidationMiddleware_ValidRequest(b *testing.B) {
 }
 
 func BenchmarkValidationMiddleware_InvalidRequest(b *testing.B) {
-	middleware, err := NewValidationMiddleware("openapi.yaml")
+	middleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(b, err)
 
 	e := echo.New()

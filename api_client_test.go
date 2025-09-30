@@ -11,6 +11,7 @@ import (
 
 	"openapi-validation-example/generated"
 
+	types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -374,7 +375,8 @@ func BenchmarkAPIClient_CreateUser(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Create unique email for each request
-		userReq.Email = fmt.Sprintf("benchmark-%d@example.com", i)
+		email := fmt.Sprintf("benchmark-%d@example.com", i)
+		userReq.Email = types.Email(email)
 
 		_, _, err := client.CreateUser(userReq)
 		if err != nil {

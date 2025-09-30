@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"openapi-validation-example/generated"
+	"openapi-validation-example/internal/handlers"
+	"openapi-validation-example/pkg/validation"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -15,16 +17,16 @@ import (
 )
 
 // setupTestApp creates a test Echo app with in-memory InMemoryUserHandler
-func setupTestApp(t *testing.T) (*echo.Echo, *InMemoryUserHandler) {
+func setupTestApp(t *testing.T) (*echo.Echo, *handlers.InMemoryUserHandler) {
 	e := echo.New()
 
 	// Setup validation middleware
-	validationMiddleware, err := NewValidationMiddleware("openapi.yaml")
+	validationMiddleware, err := validation.NewValidationMiddleware("openapi.yaml")
 	require.NoError(t, err)
 	e.Use(validationMiddleware.Validate())
 
 	// Create handler
-	userHandler := NewInMemoryUserHandler()
+	userHandler := handlers.NewInMemoryUserHandler()
 
 	// Register routes
 	generated.RegisterHandlers(e, userHandler)
@@ -128,8 +130,8 @@ func TestInMemoryUserHandler_GetUserById(t *testing.T) {
 		Email: "get-test@example.com",
 		Age:   28,
 	}
-	userHandler.users[1] = testUser
-	userHandler.nextID = 2
+	userHandler.Users[1] = testUser
+	userHandler.NextID = 2
 
 	tests := []struct {
 		name           string
